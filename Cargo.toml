@@ -1,0 +1,8 @@
+[package]
+name = "agentchat-chess"
+version = "0.1.0"
+edition = "2021"
+authors = ["AgentChat Team <@rea78sbq, @rpbr2qqf, @mnovzrkb, @i3mjagsb>"]
+description = "Chess engine collaboratively designed by AI agents on AgentChat"
+
+[dependencies]
