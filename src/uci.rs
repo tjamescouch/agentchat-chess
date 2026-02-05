@@ -3,6 +3,7 @@
 
 use crate::board::Board;
 use crate::search::search;
+use crate::movegen::generate_moves;
 use crate::types::*;
 use std::io::{self, BufRead, Write};
 
@@ -33,8 +34,28 @@ pub fn uci_loop() {
             "position" => parse_position(&mut board, &tokens),
             "go" => {
                 let depth = parse_depth(&tokens);
-                let (m, _score) = search(&mut board, depth);
-                println!("bestmove {}", move_to_uci(m));
+                let moves = generate_moves(&board);
+                if moves.is_empty() {
+                    if board.is_in_check(board.side_to_move()) {
+                        println!("info string checkmate");
+                    } else {
+                        println!("info string stalemate");
+                    }
+                    println!("bestmove 0000");
+                } else {
+                    let (m, score) = search(&mut board, depth);
+                    println!("info depth {} score cp {}", depth, score);
+                    println!("bestmove {}", move_to_uci(m));
+                }
+            }
+            "perft" => {
+                let depth = if tokens.len() > 1 {
+                    tokens[1].parse().unwrap_or(1)
+                } else {
+                    1
+                };
+                let count = crate::movegen::perft(&mut board, depth);
+                println!("Nodes searched: {}", count);
             }
             "quit" => break,
             "d" => debug_print(&board),
@@ -55,19 +76,29 @@ fn parse_position(board: &mut Board, tokens: &[&str]) {
         *board = Board::new();
         i += 1;
     } else if tokens[i] == "fen" {
-        // TODO: parse FEN
-        i += 7; // skip fen parts
+        i += 1;
+        if i + 5 < tokens.len() {
+            *board = parse_fen(&tokens[i..i+6]);
+            i += 6;
+        }
     }
 
     if i < tokens.len() && tokens[i] == "moves" {
         i += 1;
         while i < tokens.len() {
-            if let Some(m) = uci_to_move(tokens[i]) {
+            if let Some(m) = uci_to_move(board, tokens[i]) {
                 board.make_move(m);
             }
             i += 1;
         }
     }
+}
+
+fn parse_fen(parts: &[&str]) -> Board {
+    // parts: [pieces, side, castling, en_passant, halfmove, fullmove]
+    // For now, create a board from FEN by parsing piece positions
+    let mut board = Board::from_fen(parts);
+    board
 }
 
 fn parse_depth(tokens: &[&str]) -> u8 {
@@ -98,7 +129,7 @@ fn move_to_uci(m: Move) -> String {
     s
 }
 
-fn uci_to_move(s: &str) -> Option<Move> {
+fn uci_to_move(board: &Board, s: &str) -> Option<Move> {
     let bytes = s.as_bytes();
     if bytes.len() < 4 {
         return None;
@@ -128,11 +159,30 @@ fn uci_to_move(s: &str) -> Option<Move> {
         None
     };
 
+    // Check if this is a castling move
+    let is_castle = if let Some((Piece::King, _)) = board.piece_at(from) {
+        (from == E1 && (to == G1 || to == C1)) || (from == E8 && (to == G8 || to == C8))
+    } else {
+        false
+    };
+
+    // Check if this is en passant
+    let is_en_passant = if let Some((Piece::Pawn, _)) = board.piece_at(from) {
+        if let Some(ep_sq) = board.en_passant_square() {
+            to == ep_sq
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
     Some(Move {
         from,
         to,
         promotion,
-        ..Default::default()
+        is_castle,
+        is_en_passant,
     })
 }
 
@@ -162,5 +212,28 @@ fn debug_print(board: &Board) {
         println!("|");
         println!(" +---+---+---+---+---+---+---+---+");
     }
-    println!("   a   b   c   d   e   f   g   h\n");
+    println!("   a   b   c   d   e   f   g   h");
+
+    let side = if board.side_to_move() == Color::White { "White" } else { "Black" };
+    println!("\nSide to move: {}", side);
+
+    let rights = board.castling_rights();
+    print!("Castling: ");
+    if rights & WHITE_KINGSIDE != 0 { print!("K"); }
+    if rights & WHITE_QUEENSIDE != 0 { print!("Q"); }
+    if rights & BLACK_KINGSIDE != 0 { print!("k"); }
+    if rights & BLACK_QUEENSIDE != 0 { print!("q"); }
+    if rights == 0 { print!("-"); }
+    println!();
+
+    if let Some(ep) = board.en_passant_square() {
+        let ep_file = (b'a' + ep % 8) as char;
+        let ep_rank = (b'1' + ep / 8) as char;
+        println!("En passant: {}{}", ep_file, ep_rank);
+    }
+
+    if board.is_in_check(board.side_to_move()) {
+        println!("CHECK!");
+    }
+    println!();
 }
